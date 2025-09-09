@@ -15,14 +15,14 @@ reddit-sentiment-bot/
 │   ├── reddit_client.py      # Reddit API interaction
 │   ├── sentiment_analyzer.py # Claude API sentiment analysis
 │   ├── database.py           # SQLite database operations
-│   └── scheduler.py          # Daily run orchestration
+│   ├── scheduler.py          # Daily run orchestration
+│   └── secrets_manager.py    # Keychain/environment secrets access
 ├── data/
 │   └── sentiment.db          # SQLite database
 ├── config/
 │   └── config.yaml           # Configuration file
 ├── migrations/
 │   └── 001_initial_schema.sql # Database schema
-├── .env                      # API credentials (Reddit & Anthropic)
 ├── requirements.txt          # Python dependencies
 ├── main.py                   # Entry point
 └── IMPLEMENTATION_PLAN.md    # This file
@@ -185,16 +185,19 @@ CREATE INDEX idx_summaries_date ON daily_summaries(summary_date);
 ## Implementation Steps
 
 ### Phase 1: Environment Setup
-1. **Store Secrets Securely**
-   - Use macOS Keychain or environment variables
-   - Never commit secrets to version control
-   - Access via `src/secrets_manager.py` module
+1. **Store Secrets in macOS Keychain**
+   ```bash
+   # Add secrets to Keychain (replace with your actual values)
+   security add-generic-password -a "$USER" -s "REDDIT_CLIENT_ID" -w "your_client_id"
+   security add-generic-password -a "$USER" -s "REDDIT_CLIENT_SECRET" -w "your_secret"
+   security add-generic-password -a "$USER" -s "REDDIT_USER_AGENT" -w "sentiment-bot/1.0 by /u/username"
+   security add-generic-password -a "$USER" -s "ANTHROPIC_API_KEY" -w "sk-ant-..."
+   ```
    
 2. **Install Dependencies**
    ```bash
    pip install praw==7.7.1
    pip install anthropic==0.26.0
-   pip install python-dotenv==1.0.0
    pip install pyyaml==6.0.1
    pip install schedule==1.2.0
    pip install sqlalchemy==2.0.23
@@ -202,27 +205,34 @@ CREATE INDEX idx_summaries_date ON daily_summaries(summary_date);
    ```
 
 ### Phase 2: Core Development
-1. **Database Module** (`database.py`)
+1. **Secrets Manager** (`secrets_manager.py`)
+   - Function to retrieve secrets from macOS Keychain
+   - Fallback to environment variables if Keychain unavailable
+   - Load all required secrets into os.environ
+   - Validate all secrets are present
+
+2. **Database Module** (`database.py`)
    - SQLAlchemy models for all tables
    - Connection pooling
    - Query helpers for common operations
    - Migration support with Alembic
 
-2. **Reddit Client** (`reddit_client.py`)
-   - PRAW initialization with credentials
+3. **Reddit Client** (`reddit_client.py`)
+   - PRAW initialization with credentials from secrets_manager
    - Fetch all posts from last 24 hours
    - Retrieve all comments per post
    - Handle rate limiting and retries
    - Store raw data in database
 
-3. **Sentiment Analyzer** (`sentiment_analyzer.py`)
-   - Claude API client setup
+4. **Sentiment Analyzer** (`sentiment_analyzer.py`)
+   - Claude API client setup using secrets from secrets_manager
    - Batch processing logic
    - Custom prompts for Claude context
    - Cost tracking per run
    - Update database with sentiment scores
 
-4. **Main Script** (`main.py`)
+5. **Main Script** (`main.py`)
+   - Load secrets via secrets_manager at startup
    - Create analysis run entry
    - Orchestrate full workflow
    - Error handling and logging
