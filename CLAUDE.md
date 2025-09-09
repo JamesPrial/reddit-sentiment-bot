@@ -12,7 +12,7 @@ A Reddit sentiment analysis bot that analyzes posts and comments from Claude/Ant
 ```bash
 # Create and activate virtual environment
 python3 -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
+source venv/bin/activate  
 
 # Install dependencies
 pip install -r requirements.txt
@@ -49,6 +49,8 @@ black src/  # Format code
 
 ## Architecture
 
+refer to docs/IMPLEMENTATION_PLAN.md for more details
+
 ### Core Components
 1. **reddit_client.py**: PRAW-based Reddit API client
    - Fetches ALL posts from last 24 hours per subreddit
@@ -76,6 +78,8 @@ Update database → Generate daily summaries
 ```
 
 ## Database Schema
+
+refer to docs/DATABASE_SCHEMA.md for more details
 
 ### Key Tables
 - **posts**: Reddit posts with sentiment scores
