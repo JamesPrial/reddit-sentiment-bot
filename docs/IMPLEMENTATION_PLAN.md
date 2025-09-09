@@ -185,17 +185,12 @@ CREATE INDEX idx_summaries_date ON daily_summaries(summary_date);
 ## Implementation Steps
 
 ### Phase 1: Environment Setup
-1. **Create Reddit App**
-   - Go to reddit.com/prefs/apps
-   - Create "script" type application
-   - Note client_id and client_secret
+1. **Store Secrets Securely**
+   - Use macOS Keychain or environment variables
+   - Never commit secrets to version control
+   - Access via `src/secrets_manager.py` module
    
-2. **Get Anthropic API Key**
-   - Sign up at console.anthropic.com
-   - Create API key
-   - Use $5 free credit for testing
-
-3. **Install Dependencies**
+2. **Install Dependencies**
    ```bash
    pip install praw==7.7.1
    pip install anthropic==0.26.0
@@ -260,14 +255,15 @@ CREATE INDEX idx_summaries_date ON daily_summaries(summary_date);
    sqlite3 data/sentiment.db < migrations/001_initial_schema.sql
    ```
 
-2. **Configure Environment**
-   ```bash
-   # .env file
-   REDDIT_CLIENT_ID=your_client_id
-   REDDIT_CLIENT_SECRET=your_secret
-   REDDIT_USER_AGENT=sentiment-bot/1.0
-   ANTHROPIC_API_KEY=your_api_key
-   DATABASE_PATH=./data/sentiment.db
+2. **Configure Secrets**
+   ```python
+   # Secrets loaded from macOS Keychain via secrets_manager.py
+   # Required keys:
+   # - REDDIT_CLIENT_ID
+   # - REDDIT_CLIENT_SECRET
+   # - REDDIT_USER_AGENT (format: sentiment-bot/1.0 by /u/username)
+   # - ANTHROPIC_API_KEY
+   # - DATABASE_PATH (default: ./data/sentiment.db)
    ```
 
 3. **Set Up Cron Job**

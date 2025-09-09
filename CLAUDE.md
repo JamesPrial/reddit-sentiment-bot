@@ -115,14 +115,28 @@ HAVING COUNT(c.id) > 10;
 
 ## Configuration
 
-### Required Environment Variables (.env)
+### Required Secrets
+The following secrets must be available (via macOS Keychain or environment variables):
+- `REDDIT_CLIENT_ID`: Reddit app client ID
+- `REDDIT_CLIENT_SECRET`: Reddit app client secret  
+- `REDDIT_USER_AGENT`: Format: `sentiment-bot/1.0 by /u/<username>`
+- `ANTHROPIC_API_KEY`: Anthropic API key
+- `DATABASE_PATH`: Path to SQLite database (default: `./data/sentiment.db`)
+
+### Accessing Secrets in Code
+```python
+# Secrets are loaded from macOS Keychain via src/secrets_manager.py
+from src.secrets_manager import load_secrets
+
+# Load at startup
+secrets = load_secrets()
+
+# Access via os.environ after loading
+import os
+client_id = os.environ['REDDIT_CLIENT_ID']
 ```
-REDDIT_CLIENT_ID=your_client_id
-REDDIT_CLIENT_SECRET=your_secret
-REDDIT_USER_AGENT=sentiment-bot/1.0
-ANTHROPIC_API_KEY=your_api_key
-DATABASE_PATH=./data/sentiment.db
-```
+
+**Security**: Never access `.env` files directly. Secrets are loaded from Keychain or environment variables only.
 
 ### Config File (config/config.yaml)
 - Subreddit list
