@@ -1,0 +1,17 @@
+# Core dependencies
+praw==7.8.1              # Reddit API wrapper
+anthropic==0.66.0        # Claude API client
+sqlalchemy==2.0.43       # Database ORM
+alembic==1.16.5         # Database migrations
+pyyaml==6.0.2           # Configuration files
+python-dotenv==1.1.1    # Environment management
+tenacity==9.1.2         # Retry logic
+click==8.1.8            # CLI interface
+
+# Development dependencies
+pytest==8.4.2           # Testing framework
+pytest-cov==7.0.0       # Coverage reporting
+pytest-mock==3.15.0     # Mocking utilities
+black==24.12.2          # Code formatting
+pylint==3.5.0           # Code linting
+mypy==1.7.1            # Type checking

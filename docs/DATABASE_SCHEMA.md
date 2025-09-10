@@ -86,8 +86,9 @@ Master list of tracked keywords.
 | Column | Type | Description |
 |--------|------|-------------|
 | id | INTEGER PRIMARY KEY | Unique identifier |
-| keyword | TEXT UNIQUE | Keyword/phrase |
+| term | TEXT UNIQUE | Keyword/phrase |
 | category | TEXT | product/feature/company/competitor |
+| created_at | TIMESTAMP | When keyword was added |
 
 ### 6. `post_keywords`
 Many-to-many relationship between posts and keywords.
@@ -115,14 +116,15 @@ Pre-computed daily statistics for quick access.
 | id | INTEGER PRIMARY KEY | Unique identifier |
 | subreddit_id | INTEGER FK | Subreddit |
 | analysis_run_id | INTEGER FK | Analysis run |
-| summary_date | DATE | Date summarized |
+| date | DATE | Date summarized |
 | total_posts | INTEGER | Post count |
 | total_comments | INTEGER | Comment count |
 | avg_post_sentiment | REAL | Average post sentiment |
 | avg_comment_sentiment | REAL | Average comment sentiment |
-| most_positive_post_id | TEXT | Most positive post |
-| most_negative_post_id | TEXT | Most negative post |
-| top_keywords | TEXT | JSON array of top keywords |
+| top_positive_post_id | TEXT | Most positive post |
+| top_negative_post_id | TEXT | Most negative post |
+| most_discussed_post_id | TEXT | Post with most comments |
+| keyword_mentions | TEXT | JSON object of keyword counts |
 
 ## Indexes
 
@@ -134,7 +136,7 @@ Performance-optimized indexes:
 - `idx_comments_post` - Comment retrieval by post
 - `idx_comments_sentiment` - Comment sentiment queries
 - `idx_runs_date` - Run history queries
-- `idx_summaries_date` - Summary timeline queries
+- `idx_summary_date` - Summary timeline queries
 
 ## Sample Queries
 
@@ -202,10 +204,10 @@ SELECT
     ds.top_keywords
 FROM daily_summaries ds
 JOIN subreddits s ON ds.subreddit_id = s.id
-LEFT JOIN posts p1 ON ds.most_positive_post_id = p1.id
-LEFT JOIN posts p2 ON ds.most_negative_post_id = p2.id
-WHERE ds.summary_date >= date('now', '-7 days')
-ORDER BY ds.summary_date DESC, s.name;
+LEFT JOIN posts p1 ON ds.top_positive_post_id = p1.id
+LEFT JOIN posts p2 ON ds.top_negative_post_id = p2.id
+WHERE ds.date >= date('now', '-7 days')
+ORDER BY ds.date DESC, s.name;
 ```
 
 ## Data Retention

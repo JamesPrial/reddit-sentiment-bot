@@ -124,8 +124,9 @@ CREATE TABLE comments (
 -- Keywords found in posts/comments
 CREATE TABLE keywords (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    keyword TEXT UNIQUE NOT NULL,
-    category TEXT -- 'product', 'feature', 'company', 'competitor'
+    term TEXT UNIQUE NOT NULL,
+    category TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
 -- Many-to-many relationship for post keywords
@@ -153,15 +154,16 @@ CREATE TABLE daily_summaries (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     subreddit_id INTEGER NOT NULL,
     analysis_run_id INTEGER NOT NULL,
-    summary_date DATE NOT NULL,
+    date DATE NOT NULL,
     total_posts INTEGER DEFAULT 0,
     total_comments INTEGER DEFAULT 0,
     avg_post_sentiment REAL,
     avg_comment_sentiment REAL,
-    most_positive_post_id TEXT,
-    most_negative_post_id TEXT,
-    top_keywords TEXT, -- JSON array
-    UNIQUE(subreddit_id, summary_date),
+    top_positive_post_id TEXT,
+    top_negative_post_id TEXT,
+    most_discussed_post_id TEXT,
+    keyword_mentions TEXT, -- JSON object: {term: count}
+    UNIQUE(subreddit_id, date),
     FOREIGN KEY (subreddit_id) REFERENCES subreddits(id),
     FOREIGN KEY (analysis_run_id) REFERENCES analysis_runs(id)
 );
@@ -173,7 +175,7 @@ CREATE INDEX idx_posts_sentiment ON posts(sentiment_score);
 CREATE INDEX idx_comments_post ON comments(post_id);
 CREATE INDEX idx_comments_sentiment ON comments(sentiment_score);
 CREATE INDEX idx_runs_date ON analysis_runs(run_date);
-CREATE INDEX idx_summaries_date ON daily_summaries(summary_date);
+CREATE INDEX idx_summary_date ON daily_summaries(date);
 ```
 
 ### 5. Scheduling
@@ -188,10 +190,11 @@ CREATE INDEX idx_summaries_date ON daily_summaries(summary_date);
 1. **Store Secrets in macOS Keychain**
    ```bash
    # Add secrets to Keychain (replace with your actual values)
-   security add-generic-password -a "$USER" -s "REDDIT_CLIENT_ID" -w "your_client_id"
-   security add-generic-password -a "$USER" -s "REDDIT_CLIENT_SECRET" -w "your_secret"
-   security add-generic-password -a "$USER" -s "REDDIT_USER_AGENT" -w "sentiment-bot/1.0 by /u/username"
-   security add-generic-password -a "$USER" -s "ANTHROPIC_API_KEY" -w "sk-ant-..."
+   # Service name must match src/secrets_manager.py SERVICE_NAME
+   security add-generic-password -a "$USER" -s "reddit-sentiment-bot" -l "REDDIT_CLIENT_ID" -w "your_client_id"
+   security add-generic-password -a "$USER" -s "reddit-sentiment-bot" -l "REDDIT_CLIENT_SECRET" -w "your_secret"
+   security add-generic-password -a "$USER" -s "reddit-sentiment-bot" -l "REDDIT_USER_AGENT" -w "sentiment-bot/1.0 by /u/username"
+   security add-generic-password -a "$USER" -s "reddit-sentiment-bot" -l "ANTHROPIC_API_KEY" -w "sk-ant-..."
    ```
    
 2. **Install Dependencies**
