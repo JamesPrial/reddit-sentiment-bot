@@ -118,7 +118,8 @@ class Post(Base):
     )
     
     def __repr__(self):
-        return f"<Post(id='{self.id}', title='{self.title[:50]}...')>"
+        title_preview = (self.title or "")[:50]
+        return f"<Post(id='{self.id}', title='{title_preview}...')>"
 
 
 class Comment(Base):
