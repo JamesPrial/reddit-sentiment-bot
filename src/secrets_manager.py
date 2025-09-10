@@ -155,10 +155,9 @@ class SecretsManager:
                 'security', 'add-generic-password',
                 '-s', self.SERVICE_NAME,
                 '-l', secret_name,
+                '-a', account or '',  # Account is required, use empty string if not provided
                 '-w', value
             ]
-            if account:
-                add_cmd.extend(['-a', account])
             
             result = subprocess.run(
                 add_cmd,
