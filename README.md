@@ -49,7 +49,7 @@ security add-generic-password -s "reddit-sentiment-bot" -l "ANTHROPIC_API_KEY" -
 security add-generic-password -s "reddit-sentiment-bot" -l "DATABASE_PATH" -w "/path/to/sentiment.db"
 ```
 
-#### Option B: Environment Variables
+#### Option B: Environment Variables / .env
 
 ```bash
 export REDDIT_CLIENT_ID="your_client_id"
@@ -59,13 +59,25 @@ export ANTHROPIC_API_KEY="your_api_key"
 export DATABASE_PATH="./data/sentiment.db"  # Optional
 ```
 
-Or create a `.env` file (not recommended for production):
+You can also create a `.env` file for local development (never commit secrets):
 ```
 REDDIT_CLIENT_ID=your_client_id
 REDDIT_CLIENT_SECRET=your_client_secret
 REDDIT_USER_AGENT=sentiment-bot/1.0 by /u/yourusername
 ANTHROPIC_API_KEY=your_api_key
+DATABASE_PATH=./data/sentiment.db  # optional
 ```
+
+The app loads `.env` automatically at startup, without overriding existing environment variables. Precedence is:
+
+1) macOS Keychain (if available)
+2) OS environment variables
+3) .env file (if present)
+
+Notes:
+- To point to a specific env file, set `DOTENV_PATH=/path/to/.env`.
+- `.env` files are ignored by `.gitignore`.
+- Prefer Keychain or exported env vars for production.
 
 ### 3. Getting API Credentials
 
@@ -101,12 +113,17 @@ sqlite3 data/sentiment.db < migrations/001_initial_schema.sql
 
 ## Configuration
 
-Edit `config/config.yaml` to customize:
+Edit `config/config.yaml` to customize (start from `config/config.template.yaml`):
 - Target subreddits
 - Claude model and batch size
 - Rate limits
 - Cost limits
 - Database settings
+
+To get started quickly:
+```bash
+cp config/config.template.yaml config/config.yaml
+```
 
 Edit `config/keywords.yaml` to track specific terms:
 - Products (Claude versions, etc.)

@@ -1,0 +1,39 @@
+# Configuration template for Reddit Sentiment Analysis Bot
+#
+# Copy this file to config/config.yaml and adjust values as needed.
+# Database path precedence at runtime:
+#   1) macOS Keychain `DATABASE_PATH` (if set)
+#   2) OS env var `DATABASE_PATH` or .env
+#   3) This file's `database.path`
+
+subreddits:
+  - ClaudeAI
+  - Anthropic
+  - ClaudeCode
+
+claude:
+  model: claude-3-5-sonnet-20241022
+  batch_size: 15
+  temperature: 0.3
+  max_tokens: 2000
+
+reddit:
+  requests_per_minute: 60
+  time_filter: day           # Fetch posts from last day
+  fetch_comments: true
+  comment_limit: null        # null = fetch all comments
+
+cost:
+  daily_limit: 5.0
+  warn_threshold: 4.0
+
+database:
+  # Default on-disk SQLite path. Overridden by DATABASE_PATH secret/env if present.
+  path: ./data/sentiment.db
+  backup_before_run: true
+
+logging:
+  level: INFO
+  file: bot.log
+  format: '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+

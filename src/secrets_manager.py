@@ -10,6 +10,12 @@ import subprocess
 import json
 import logging
 from typing import Dict, Optional, List, Tuple
+try:
+    # Load .env files for local development without overriding real env vars
+    from dotenv import load_dotenv, find_dotenv  # type: ignore
+except Exception:  # pragma: no cover - optional dependency safety
+    load_dotenv = None  # type: ignore
+    find_dotenv = None  # type: ignore
 
 logger = logging.getLogger(__name__)
 
@@ -45,6 +51,41 @@ class SecretsManager:
         self.keychain_available = self._check_keychain_availability()
         if not self.keychain_available:
             logger.warning("macOS Keychain not available, falling back to environment variables")
+        # Attempt to load variables from a .env file (if present)
+        self._load_dotenv_if_available()
+
+    def _load_dotenv_if_available(self) -> None:
+        """Load environment variables from a .env file without overriding existing ones.
+
+        Search order:
+        - Path specified by `DOTENV_PATH` env var, if set
+        - Closest `.env` found from current working directory upward
+
+        Notes:
+        - Existing environment variables are not overridden
+        - This enables local development without requiring Keychain or exported vars
+        """
+        try:
+            if load_dotenv is None:
+                return
+            dotenv_path = os.environ.get('DOTENV_PATH')
+            if not dotenv_path and find_dotenv is not None:
+                # Use current working directory to find closest .env
+                dotenv_path = find_dotenv(usecwd=True)
+
+            if dotenv_path:
+                loaded = load_dotenv(dotenv_path, override=False)
+            else:
+                # Fallback to default behavior (search CWD) if find_dotenv not available
+                loaded = load_dotenv(override=False)
+
+            if loaded:
+                logger.info("Loaded environment variables from .env")
+            else:
+                logger.debug("No .env file found or nothing to load")
+        except Exception as e:
+            # Never fail on dotenv issues; just log for visibility
+            logger.debug(f"Skipping .env load due to error: {e}")
     
     def _check_keychain_availability(self) -> bool:
         """Check if macOS Keychain is available on this system."""
@@ -243,7 +284,7 @@ class SecretsManager:
         """
         Load all required secrets into environment variables.
         
-        Priority: macOS Keychain > Environment Variables
+        Priority: macOS Keychain > Environment Variables > .env (loaded at init)
         
         Returns:
             Dictionary of loaded secrets for validation
