@@ -440,6 +440,39 @@ class TestDatabaseManager:
         assert 'avg_sentiment' in trend[0]
         assert 'post_count' in trend[0]
 
+    def test_update_keyword_associations_from_results(self, db_manager, sample_posts):
+        """Upsert keywords and associate them to posts based on analyzer results."""
+        run = db_manager.create_analysis_run()
+        db_manager.bulk_insert_posts(sample_posts, run.id)
+
+        # Analyzer-like results with keywords
+        results = [
+            {'id': 'post_1', 'keywords': ['Claude', 'Projects', 'ChatGPT']},
+            {'id': 'post_2', 'keywords': ['Artifacts', 'Sonnet']},
+            {'id': 'post_3', 'keywords': ['UnknownTerm']},
+        ]
+
+        links = db_manager.update_keyword_associations_from_results(results, 'post')
+        assert links >= 5
+
+        # Verify keyword rows and categories
+        with db_manager.transaction() as session:
+            from src.database import Keyword, Post
+            kws = session.query(Keyword).all()
+            terms = {k.term: k.category for k in kws}
+            # Stored terms are normalized lower-case
+            assert 'claude' in terms and terms['claude'] == 'product'
+            assert 'projects' in terms and terms['projects'] == 'feature'
+            assert 'chatgpt' in terms and terms['chatgpt'] == 'competitor'
+            assert 'sonnet' in terms and terms['sonnet'] == 'product'
+            assert 'artifact' not in terms  # ensure exact mapping
+
+            # Associations
+            p1 = session.query(Post).filter_by(id='post_1').first()
+            p2 = session.query(Post).filter_by(id='post_2').first()
+            assert {k.term for k in p1.keywords} >= {'claude', 'projects', 'chatgpt'}
+            assert {k.term for k in p2.keywords} >= {'artifacts', 'sonnet'}
+
     def test_generate_daily_summary_keyword_mentions_and_avg_comment_sentiment(self, db_manager, sample_posts, sample_comments):
         """Daily summary includes avg comment sentiment and keyword mentions."""
         import json as _json

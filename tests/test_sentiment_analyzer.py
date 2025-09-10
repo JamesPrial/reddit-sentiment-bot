@@ -336,6 +336,88 @@ class TestSentimentAnalyzer:
         assert results[1]['sentiment_score'] == 0.3
         assert results[2]['sentiment_score'] == 0.0  # Fallback
         assert results[2]['requires_reanalysis'] is True
+
+    def test_analyze_batch_uses_indices_for_alignment(self, analyzer, sample_posts):
+        """Model returns results out of order with explicit indices; analyzer aligns correctly."""
+        # Mock response with indices out of order
+        mock_response = Mock()
+        mock_response.content = [Mock(text=json.dumps([
+            {
+                'index': 2,
+                'sentiment_score': -0.2,
+                'sentiment_explanation': 'Index two',
+                'keywords': []
+            },
+            {
+                'index': 0,
+                'sentiment_score': 0.9,
+                'sentiment_explanation': 'Index zero',
+                'keywords': []
+            },
+            {
+                'index': 1,
+                'sentiment_score': 0.1,
+                'sentiment_explanation': 'Index one',
+                'keywords': []
+            }
+        ]))]
+        mock_response.usage = Mock(input_tokens=1000, output_tokens=500)
+
+        analyzer.client.messages.create = Mock(return_value=mock_response)
+
+        # Expand to 3 posts for this test
+        posts = sample_posts + [{
+            'id': 'post3',
+            'title': 'Third post',
+            'selftext': 'More content',
+            'subreddit': 'ClaudeAI',
+            'score': 1,
+            'author': 'user3'
+        }][:1]
+
+        results = analyzer.analyze_batch(posts, 'post')
+
+        # Scores should be aligned by index regardless of result order
+        assert results[0]['sentiment_score'] == 0.9
+        assert results[1]['sentiment_score'] == 0.1
+        assert results[2]['sentiment_score'] == -0.2
+
+    def test_analyze_batch_respects_cost_manager(self, sample_posts):
+        """Analyzer should use CostManager.can_proceed and record_usage."""
+        # Build analyzer with a mocked CostManager
+        with patch('src.sentiment_analyzer.Anthropic'):
+            from src.sentiment_analyzer import CostManager, SentimentAnalyzer
+            mock_cm = MagicMock(spec=CostManager)
+            mock_cm.can_proceed.return_value = True
+            analyzer = SentimentAnalyzer(api_key="test-key", cost_manager=mock_cm)
+            analyzer.client = MagicMock()
+
+        # Mock a minimal valid API response
+        mock_response = Mock()
+        mock_response.content = [Mock(text=json.dumps([
+            {'index': 0, 'sentiment_score': 0.1, 'sentiment_explanation': 'ok', 'keywords': []},
+            {'index': 1, 'sentiment_score': -0.1, 'sentiment_explanation': 'meh', 'keywords': []}
+        ]))]
+        mock_response.usage = Mock(input_tokens=1000, output_tokens=500)
+        analyzer.client.messages.create = Mock(return_value=mock_response)
+
+        _ = analyzer.analyze_batch(sample_posts, 'post')
+
+        # CostManager consulted and updated
+        assert mock_cm.can_proceed.called
+        assert mock_cm.record_usage.called
+
+    def test_analyze_batch_blocked_by_cost_manager(self, sample_posts):
+        """Analyzer should raise if CostManager denies budget."""
+        with patch('src.sentiment_analyzer.Anthropic'):
+            from src.sentiment_analyzer import CostManager, SentimentAnalyzer
+            mock_cm = MagicMock(spec=CostManager)
+            mock_cm.can_proceed.return_value = False
+            analyzer = SentimentAnalyzer(api_key="test-key", cost_manager=mock_cm)
+            analyzer.client = MagicMock()
+
+        with pytest.raises(ValueError, match="Daily cost limit would be exceeded"):
+            analyzer.analyze_batch(sample_posts, 'post')
     
     def test_process_items_in_batches(self, analyzer):
         """Test processing multiple items in batches."""

@@ -45,7 +45,7 @@ class SentimentAnalyzer:
     MAX_BATCH_SIZE = 20
     MIN_BATCH_SIZE = 5
     
-    def __init__(self, api_key: str, model: str = "claude-3-5-sonnet-20241022"):
+    def __init__(self, api_key: str, model: str = "claude-3-5-sonnet-20241022", cost_manager: Optional["CostManager"] = None):
         """
         Initialize Anthropic client with configuration.
         
@@ -55,6 +55,7 @@ class SentimentAnalyzer:
         """
         self.client = Anthropic(api_key=api_key)
         self.model = model
+        self.cost_manager = cost_manager
         self.cost_tracker = CostTracking(
             daily_limit=5.0,
             current_daily_cost=0.0,
@@ -98,16 +99,37 @@ class SentimentAnalyzer:
             self._update_cost_tracking(response.usage)
             
             # Merge sentiment scores with original items
-            for i, item in enumerate(items):
-                if i < len(sentiment_results):
-                    item.update(sentiment_results[i])
-                else:
-                    # Fallback for missing results
-                    item.update({
-                        'sentiment_score': 0.0,
-                        'sentiment_explanation': 'Analysis failed',
-                        'requires_reanalysis': True
-                    })
+            # Prefer explicit index mapping returned by the model if present
+            index_map = {}
+            if sentiment_results and isinstance(sentiment_results, list) and isinstance(sentiment_results[0], dict) and 'index' in sentiment_results[0]:
+                try:
+                    index_map = {int(r['index']): r for r in sentiment_results if 'index' in r}
+                except Exception:
+                    index_map = {}
+            if index_map:
+                for i, item in enumerate(items):
+                    r = index_map.get(i)
+                    if r:
+                        # Do not propagate the helper index key to items
+                        r = {k: v for k, v in r.items() if k != 'index'}
+                        item.update(r)
+                    else:
+                        item.update({
+                            'sentiment_score': 0.0,
+                            'sentiment_explanation': 'Analysis missing for this item',
+                            'requires_reanalysis': True
+                        })
+            else:
+                for i, item in enumerate(items):
+                    if i < len(sentiment_results):
+                        item.update(sentiment_results[i])
+                    else:
+                        # Fallback for missing results
+                        item.update({
+                            'sentiment_score': 0.0,
+                            'sentiment_explanation': 'Analysis failed',
+                            'requires_reanalysis': True
+                        })
             
             return items
             
@@ -219,7 +241,7 @@ Example format:
             
         except RateLimitError as e:
             logger.warning(f"Rate limit hit, retrying: {str(e)}")
-            time.sleep(10)  # Extra delay for rate limits
+            # Rely on tenacity backoff; do not add extra sleep here
             raise
             
         except APIError as e:
@@ -259,6 +281,12 @@ Example format:
                     'sentiment_explanation': item.get('sentiment_explanation', '')[:200],
                     'keywords': item.get('keywords', [])[:10]  # Limit keywords
                 }
+                # Preserve index if provided for alignment
+                if isinstance(item, dict) and 'index' in item:
+                    try:
+                        cleaned_item['index'] = int(item['index'])
+                    except Exception:
+                        pass
                 cleaned_results.append(cleaned_item)
             
             return cleaned_results
@@ -328,6 +356,12 @@ Example format:
         Returns:
             True if within budget, False otherwise
         """
+        # Prefer centralized CostManager if provided
+        if self.cost_manager is not None:
+            try:
+                return self.cost_manager.can_proceed(estimated_cost)
+            except Exception:
+                logger.warning("CostManager.can_proceed failed; falling back to local tracker")
         return (self.cost_tracker.current_daily_cost + estimated_cost) <= self.cost_tracker.daily_limit
     
     def _update_cost_tracking(self, usage):
@@ -347,6 +381,13 @@ Example format:
             self.cost_tracker.output_tokens += output_tokens
             self.cost_tracker.session_cost += cost
             self.cost_tracker.current_daily_cost += cost
+            # Also record via CostManager if present (pass run_id if available)
+            if self.cost_manager is not None:
+                try:
+                    run_id = getattr(self, 'run_id', None)
+                    self.cost_manager.record_usage(cost, run_id=run_id)
+                except Exception:
+                    logger.warning("CostManager.record_usage failed; continuing with local tracking")
             
             logger.info(f"API call cost: ${cost:.4f} "
                        f"(Session total: ${self.cost_tracker.session_cost:.2f}, "

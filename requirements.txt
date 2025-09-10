@@ -12,6 +12,8 @@ click==8.1.8            # CLI interface
 pytest==8.4.2           # Testing framework
 pytest-cov==7.0.0       # Coverage reporting
 pytest-mock==3.15.0     # Mocking utilities
-black==24.12.2          # Code formatting
+# Use a Python-version-aware pin for black to support Python 3.9 in CI
+black==24.10.0; python_version < '3.10'   # Code formatting (Py39 compatible)
+black==24.12.2; python_version >= '3.10'  # Code formatting (latest for Py310+)
 pylint==3.5.0           # Code linting
 mypy==1.7.1            # Type checking

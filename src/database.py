@@ -30,6 +30,8 @@ logger = logging.getLogger(__name__)
 
 Base = declarative_base()
 
+from src.taxonomy import classify_term
+
 
 # Association tables for many-to-many relationships
 post_keywords = Table(
@@ -494,6 +496,76 @@ class DatabaseManager:
                         item.sentiment_explanation = item_data['sentiment_explanation']
         
         logger.info(f"Updated sentiment scores for {len(items)} {item_type}s")
+
+    def update_keyword_associations_from_results(self, items: List[Dict[str, Any]], item_type: str = 'post') -> int:
+        """
+        Upsert keywords and associate them with posts or comments based on analysis results.
+
+        Args:
+            items: List of dicts with 'id' and 'keywords' (list[str]) from analyzer
+            item_type: 'post' or 'comment'
+
+        Returns:
+            Number of associations created (approximate)
+        """
+        if not items:
+            return 0
+
+        Model = Post if item_type == 'post' else Comment
+
+        created_links = 0
+        with self.transaction() as session:
+            # Build term set and load existing keywords in bulk
+            term_set = set()
+            for it in items:
+                for kw in (it.get('keywords') or []):
+                    if isinstance(kw, str) and kw.strip():
+                        term_set.add(kw.strip().lower())
+
+            if not term_set:
+                return 0
+
+            existing_keywords = session.query(Keyword).filter(
+                Keyword.term.in_(list(term_set))
+            ).all()
+            kw_by_term = {k.term: k for k in existing_keywords}
+
+            # Upsert missing
+            for term in term_set:
+                if term not in kw_by_term:
+                    kw = Keyword(term=term, category=classify_term(term))
+                    session.add(kw)
+                    session.flush()
+                    kw_by_term[term] = kw
+
+            # Associate keywords to items
+            for it in items:
+                target = session.query(Model).filter_by(id=it.get('id')).first()
+                if not target:
+                    continue
+                raw_terms = it.get('keywords') or []
+                # Deduplicate per item
+                seen = set()
+                for term in raw_terms:
+                    if not isinstance(term, str):
+                        continue
+                    norm = term.strip().lower()
+                    if not norm or norm in seen:
+                        continue
+                    seen.add(norm)
+                    kw = kw_by_term.get(norm)
+                    if not kw:
+                        continue
+                    try:
+                        target.keywords.append(kw)
+                        session.flush()
+                        created_links += 1
+                    except IntegrityError:
+                        session.rollback()
+                        continue
+
+        logger.info(f"Associated keywords for {len(items)} {item_type}s (links: {created_links})")
+        return created_links
     
     def get_posts_for_analysis(self, batch_size: int = 20, run_id: Optional[int] = None) -> List[Post]:
         """

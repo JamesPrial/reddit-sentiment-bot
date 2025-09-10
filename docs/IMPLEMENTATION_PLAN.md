@@ -305,12 +305,15 @@ sentiment:
   temperature: 0.3    # lower for consistent scoring
   
 keywords:
+  # Optional inline keywords; prefer external file config/keywords.yaml
   products:
     - "Claude"
     - "Claude 3"
     - "Claude 3.5"
     - "Opus"
+    - "Opus 4.1"
     - "Sonnet"
+    - "Sonnet 4"
     - "Haiku"
   features:
     - "Artifacts"
@@ -325,8 +328,10 @@ keywords:
   competitors:
     - "ChatGPT"
     - "GPT-4"
+    - "GPT4"
     - "Gemini"
     - "Copilot"
+    - "Codex"
     
 database:
   path: "./data/sentiment.db"
@@ -340,6 +345,42 @@ logging:
   max_size_mb: 10
   backup_count: 5
 ```
+
+### Keyword Taxonomy File
+Create `config/keywords.yaml` (used by default; override with `KEYWORDS_CONFIG_PATH` env var):
+
+```yaml
+keywords:
+  products:
+    - Claude
+    - Claude 3
+    - Claude 3.5
+    - Opus
+    - Opus 4.1
+    - Sonnet
+    - Sonnet 4
+    - Haiku
+  features:
+    - Artifacts
+    - Projects
+    - Claude Code
+    - Computer Use
+    - Vision
+  company:
+    - Anthropic
+    - Constitutional AI
+    - RLHF
+  competitors:
+    - ChatGPT
+    - GPT-4
+    - GPT4
+    - Gemini
+    - Copilot
+    - Codex
+```
+
+The taxonomy merges with built-in defaults and is matched case-insensitively.
+Terms are stored normalized (lower-case) in the database.
 
 ## Cost Estimation
 - **Reddit API**: Free (within rate limits)
