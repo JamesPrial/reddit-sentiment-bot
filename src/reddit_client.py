@@ -9,11 +9,12 @@ import logging
 import os
 import time
 from datetime import datetime, timedelta
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional, Any, Callable
 
 import praw
 from praw.models import Subreddit, Submission, Comment, MoreComments
 from prawcore.exceptions import ResponseException, RequestException
+from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception
 
 logger = logging.getLogger(__name__)
 
@@ -51,10 +52,20 @@ class RateLimitHandler:
         self.request_times.append(time.time())
 
 
+def _should_retry(exc: Exception) -> bool:
+    """Retry on network errors and select HTTP statuses (429, 5xx)."""
+    if isinstance(exc, RequestException):
+        return True
+    if isinstance(exc, ResponseException):
+        code = getattr(exc.response, 'status_code', None)
+        return code in {429, 500, 502, 503, 504}
+    return False
+
+
 class RedditClient:
     """Client for interacting with Reddit API via PRAW."""
     
-    def __init__(self, credentials: Optional[Dict[str, str]] = None):
+    def __init__(self, credentials: Optional[Dict[str, str]] = None, requests_per_minute: int = 60):
         """
         Initialize Reddit client with credentials.
         
@@ -69,7 +80,7 @@ class RedditClient:
         else:
             client_id = os.environ.get('REDDIT_CLIENT_ID')
             client_secret = os.environ.get('REDDIT_CLIENT_SECRET')
-            user_agent = os.environ.get('REDDIT_USER_AGENT', 'sentiment-bot/1.0')
+            user_agent = os.environ.get('REDDIT_USER_AGENT')
         
         if not all([client_id, client_secret, user_agent]):
             raise ValueError("Reddit credentials not found. Ensure REDDIT_CLIENT_ID, "
@@ -81,8 +92,27 @@ class RedditClient:
             user_agent=user_agent
         )
         
-        self.rate_limiter = RateLimitHandler()
+        self.rate_limiter = RateLimitHandler(requests_per_minute=requests_per_minute)
         logger.info("RedditClient initialized successfully")
+
+    # Retry helpers for transient failures
+    @retry(
+        retry=retry_if_exception(_should_retry),
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=0.1, min=0.1, max=1.0),
+        reraise=True,
+    )
+    def _get_subreddit(self, name: str):
+        return self.reddit.subreddit(name)
+
+    @retry(
+        retry=retry_if_exception(_should_retry),
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=0.1, min=0.1, max=1.0),
+        reraise=True,
+    )
+    def _get_submission(self, post_id: str):
+        return self.reddit.submission(id=post_id)
     
     def fetch_subreddit_posts(self, subreddit_name: str, 
                              time_filter: str = 'day') -> List[Dict[str, Any]]:
@@ -100,21 +130,37 @@ class RedditClient:
         
         try:
             self.rate_limiter.wait_if_needed()
-            subreddit = self.reddit.subreddit(subreddit_name)
+            subreddit = self._get_subreddit(subreddit_name)
             self.rate_limiter.record_request()
             
-            # Calculate cutoff time for last 24 hours
-            cutoff_time = datetime.utcnow() - timedelta(days=1)
-            cutoff_timestamp = cutoff_time.timestamp()
+            # Calculate cutoff time based on time_filter
+            cutoff_timestamp: Optional[float]
+            tf = (time_filter or 'day').lower()
+            if tf == 'all':
+                cutoff_timestamp = None
+            else:
+                days = {
+                    'hour': 1.0 / 24.0,
+                    'day': 1.0,
+                    'week': 7.0,
+                    'month': 30.0,
+                    'year': 365.0,
+                }.get(tf, 1.0)
+                cutoff_time = datetime.utcnow() - timedelta(days=days)
+                cutoff_timestamp = cutoff_time.timestamp()
             
             # Fetch new posts (most recent first)
             logger.info(f"Fetching new posts from r/{subreddit_name}")
             for submission in subreddit.new(limit=None):
                 self.rate_limiter.wait_if_needed()
                 
-                # Stop when we hit posts older than 24 hours
-                if submission.created_utc < cutoff_timestamp:
-                    break
+                # Stop when we hit posts older than cutoff (ignore stickied)
+                if cutoff_timestamp is not None and submission.created_utc < cutoff_timestamp:
+                    if getattr(submission, 'stickied', False):
+                        # skip old stickied posts
+                        continue
+                    else:
+                        break
                 
                 posts.append(self._extract_post_data(submission))
                 self.rate_limiter.record_request()
@@ -138,7 +184,8 @@ class RedditClient:
         return posts
     
     def fetch_post_comments(self, post_id: str, 
-                          limit: Optional[int] = None) -> List[Dict[str, Any]]:
+                          limit: Optional[int] = None,
+                          replace_more_limit: int = 0) -> List[Dict[str, Any]]:
         """
         Fetch ALL comments for a post (handles MoreComments).
         
@@ -153,12 +200,12 @@ class RedditClient:
         
         try:
             self.rate_limiter.wait_if_needed()
-            submission = self.reddit.submission(id=post_id)
+            submission = self._get_submission(post_id)
             self.rate_limiter.record_request()
             
             # Expand all comments (replace MoreComments objects)
             self.rate_limiter.wait_if_needed()
-            submission.comments.replace_more(limit=0)
+            submission.comments.replace_more(limit=replace_more_limit)
             self.rate_limiter.record_request()
             
             # Extract all comments
@@ -173,6 +220,10 @@ class RedditClient:
             
             logger.info(f"Fetched {len(comments)} comments for post {post_id}")
             
+        except ResponseException as e:
+            logger.error(f"Reddit API error fetching comments for {post_id}: {e}")
+        except RequestException as e:
+            logger.error(f"Network error fetching comments for {post_id}: {e}")
         except Exception as e:
             logger.error(f"Error fetching comments for post {post_id}: {e}")
         

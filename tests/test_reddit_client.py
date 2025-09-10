@@ -114,6 +114,16 @@ class TestRedditClient:
                     client_secret='env_secret',
                     user_agent='env_agent'
                 )
+
+    def test_init_missing_user_agent(self):
+        """Require user agent when initializing from env."""
+        with patch.dict(os.environ, {
+            'REDDIT_CLIENT_ID': 'env_id',
+            'REDDIT_CLIENT_SECRET': 'env_secret',
+        }, clear=True):
+            with patch('praw.Reddit'):
+                with pytest.raises(ValueError, match="Reddit credentials not found"):
+                    RedditClient()
     
     def test_init_missing_credentials(self):
         """Test error when credentials are missing."""
@@ -170,6 +180,82 @@ class TestRedditClient:
             assert posts[1]['title'] == 'Title 1'
             assert posts[2]['selftext'] == 'Content 2'
             assert all(p['subreddit'] == 'ClaudeAI' for p in posts)
+
+    def test_fetch_subreddit_posts_time_filter_week(self):
+        """Use time_filter to expand cutoff to a week."""
+        mock_posts = []
+        base = datetime.utcnow() - timedelta(days=6)
+        for i in range(3):
+            post = Mock()
+            post.id = f'post{i}'
+            post.title = 't'
+            post.selftext = 's'
+            post.created_utc = (base + timedelta(hours=i)).timestamp()
+            post.score = 0
+            post.num_comments = 0
+            post.upvote_ratio = 1.0
+            post.url = 'u'
+            post.permalink = '/p'
+            post.author = Mock()
+            post.author.__str__ = Mock(return_value='u')
+            post.subreddit = Mock()
+            post.subreddit.display_name = 'ClaudeAI'
+            post.stickied = False
+            mock_posts.append(post)
+        with patch('praw.Reddit') as mock_class:
+            mock_reddit = Mock()
+            mock_class.return_value = mock_reddit
+            mock_sub = Mock()
+            mock_reddit.subreddit.return_value = mock_sub
+            mock_sub.new.return_value = mock_posts
+            client = RedditClient(credentials={'client_id':'x','client_secret':'y','user_agent':'z'})
+            res = client.fetch_subreddit_posts('ClaudeAI', time_filter='week')
+            assert len(res) == 3
+
+    def test_fetch_subreddit_posts_old_stickied_skipped(self):
+        """Old stickied post should not cause early break."""
+        # First item is stickied and old; second is fresh
+        old_stickied = Mock()
+        old_stickied.created_utc = (datetime.utcnow() - timedelta(days=3)).timestamp()
+        old_stickied.stickied = True
+        # ensure extract path won't crash
+        old_stickied.id = 's'
+        old_stickied.title = 's'
+        old_stickied.selftext = ''
+        old_stickied.score = 0
+        old_stickied.num_comments = 0
+        old_stickied.upvote_ratio = 1.0
+        old_stickied.url = 'u'
+        old_stickied.permalink = '/p'
+        old_stickied.author = None
+        old_stickied.subreddit = Mock()
+        old_stickied.subreddit.display_name = 'ClaudeAI'
+
+        fresh = Mock()
+        fresh.created_utc = (datetime.utcnow() - timedelta(hours=1)).timestamp()
+        fresh.stickied = False
+        fresh.id = 'fresh'
+        fresh.title = 't'
+        fresh.selftext = ''
+        fresh.score = 0
+        fresh.num_comments = 0
+        fresh.upvote_ratio = 1.0
+        fresh.url = 'u'
+        fresh.permalink = '/p'
+        fresh.author = None
+        fresh.subreddit = Mock()
+        fresh.subreddit.display_name = 'ClaudeAI'
+
+        with patch('praw.Reddit') as mock_class:
+            mock_reddit = Mock()
+            mock_class.return_value = mock_reddit
+            mock_sub = Mock()
+            mock_reddit.subreddit.return_value = mock_sub
+            mock_sub.new.return_value = [old_stickied, fresh]
+            client = RedditClient(credentials={'client_id':'x','client_secret':'y','user_agent':'z'})
+            res = client.fetch_subreddit_posts('ClaudeAI', time_filter='day')
+            # Old stickied skipped, fresh included
+            assert any(p['id'] == 'fresh' for p in res)
     
     def test_fetch_subreddit_posts_not_found(self):
         """Test handling of non-existent subreddit."""
@@ -272,6 +358,67 @@ class TestRedditClient:
             assert comments[1]['body'] == 'Comment body 1'
             assert comments[2]['author'] == 'commenter2'
             assert all(c['post_id'] == 'post123' for c in comments)
+
+    def test_fetch_post_comments_replace_more_limit(self):
+        """Ensure replace_more_limit is passed through."""
+        from praw.models import Comment
+        mock_comments = [Mock(spec=Comment) for _ in range(2)]
+        for i, comment in enumerate(mock_comments):
+            comment.id = f'c{i}'
+            comment.body = 'b'
+            comment.parent_id = 't3_post'
+            comment.created_utc = 0
+            comment.score = 0
+            comment.is_submitter = False
+            comment.permalink = '/x'
+            comment.author = None
+        with patch('praw.Reddit') as mock_class:
+            mock_reddit = Mock()
+            mock_class.return_value = mock_reddit
+            mock_subm = Mock()
+            mock_reddit.submission.return_value = mock_subm
+            mock_subm.comments = Mock()
+            mock_subm.comments.replace_more = Mock()
+            mock_subm.comments.list.return_value = mock_comments
+            client = RedditClient(credentials={'client_id':'x','client_secret':'y','user_agent':'z'})
+            _ = client.fetch_post_comments('post', replace_more_limit=2)
+            mock_subm.comments.replace_more.assert_called_once_with(limit=2)
+
+    def test_client_rpm_configuration(self):
+        """Pass custom requests_per_minute to the client."""
+        with patch('praw.Reddit'):
+            client = RedditClient(credentials={'client_id':'x','client_secret':'y','user_agent':'z'}, requests_per_minute=2)
+        assert client.rate_limiter.requests_per_minute == 2
+
+    def test_retry_on_request_exception(self):
+        """Transient RequestException should be retried and then succeed."""
+        with patch('praw.Reddit') as mock_class:
+            mock_reddit = Mock()
+            mock_class.return_value = mock_reddit
+            mock_sub = Mock()
+            # First call raises RequestException, second returns mock_sub
+            mock_reddit.subreddit.side_effect = [
+                RequestException(request_args=(), request_kwargs={}, original_exception=Exception("net")),
+                mock_sub
+            ]
+            # Provide a simple iterable for new()
+            post = Mock()
+            post.id = 'p'
+            post.title = 't'
+            post.selftext = ''
+            post.created_utc = (datetime.utcnow() - timedelta(hours=1)).timestamp()
+            post.score = 0
+            post.num_comments = 0
+            post.upvote_ratio = 1.0
+            post.url = 'u'
+            post.permalink = '/p'
+            post.author = None
+            post.subreddit = Mock(); post.subreddit.display_name = 'ClaudeAI'
+            mock_sub.new.return_value = [post]
+
+            client = RedditClient(credentials={'client_id':'x','client_secret':'y','user_agent':'z'})
+            res = client.fetch_subreddit_posts('ClaudeAI')
+            assert len(res) == 1
     
     def test_fetch_post_comments_with_limit(self):
         """Test comment fetching with limit."""
