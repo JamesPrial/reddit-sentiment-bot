@@ -77,6 +77,7 @@ The app loads `.env` automatically at startup, without overriding existing envir
 Notes:
 - To point to a specific env file, set `DOTENV_PATH=/path/to/.env`.
 - `.env` files are ignored by `.gitignore`.
+- Quick start: `cp .env.example .env` and edit values.
 - Prefer Keychain or exported env vars for production.
 
 ### 3. Getting API Credentials
@@ -144,15 +145,30 @@ python -m src.main
 
 # Or
 python src/main.py
+
+# Analyze only the last run (no fetching; regenerates daily summaries)
+python -m src.main --analyze-last-run
+
+# Analyze only a specific run ID (no fetching; regenerates daily summaries)
+python -m src.main --analyze-run-id 42
+
+# Write summary results to a JSON file (summaries only)
+python -m src.main --output-file data/analysis_run_output.json
+
+# Reset the database (drop + recreate schema, then exit)
+python -m src.main --reset-db
 ```
 
 The bot will:
-1. Fetch posts from configured subreddits
-2. Fetch all comments for each post
-3. Analyze sentiment in batches
+1. Fetch posts from configured subreddits (skipped with --analyze-last-run)
+2. Fetch all comments for each post (skipped with --analyze-last-run)
+3. Analyze sentiment in batches (always runs)
 4. Store results in database
-5. Generate daily summaries
+5. Generate daily summaries (upserted with --analyze-last-run)
 6. Log progress to console and bot.log
+7. Write analysis JSON to `data/analysis_run_<id>.json` (override with `--output-file`)
+   - Includes full daily summaries only (no per-item details, no keywords)
+8. Optional: `--reset-db` clears all data by recreating schema
 
 ### Output
 

@@ -48,7 +48,7 @@ class SecretsManager:
     
     def __init__(self):
         """Initialize the secrets manager."""
-        self.keychain_available = self._check_keychain_availability()
+        self.keychain_available = None #####
         if not self.keychain_available:
             logger.warning("macOS Keychain not available, falling back to environment variables")
         # Attempt to load variables from a .env file (if present)

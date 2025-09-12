@@ -590,23 +590,62 @@ class DatabaseManager:
             session.expunge_all()
             return posts
     
-    def get_comments_for_analysis(self, batch_size: int = 50) -> List[Comment]:
+    def get_comments_for_analysis(self, batch_size: int = 50, run_id: Optional[int] = None) -> List[Comment]:
         """
         Retrieve unanalyzed comments in batches.
         
         Args:
             batch_size: Number of comments to retrieve
+            run_id: Optional analysis run ID to filter by associated post
             
         Returns:
             List of Comment objects
         """
         with self.transaction() as session:
-            comments = session.query(Comment).filter(
-                Comment.sentiment_score.is_(None)
-            ).limit(batch_size).all()
+            query = session.query(Comment).filter(Comment.sentiment_score.is_(None))
+            if run_id is not None:
+                # Filter comments whose parent post belongs to the given analysis run
+                query = query.join(Post, Comment.post_id == Post.id).filter(
+                    Post.analysis_run_id == run_id
+                )
+            comments = query.limit(batch_size).all()
             
             session.expunge_all()
             return comments
+
+    def get_latest_run(self, status: Optional[str] = None) -> Optional[AnalysisRun]:
+        """Return the most recent analysis run, optionally filtered by status.
+
+        Args:
+            status: Optional status filter ('running', 'completed', 'failed')
+
+        Returns:
+            Latest AnalysisRun or None if none exist
+        """
+        with self.transaction() as session:
+            query = session.query(AnalysisRun)
+            if status:
+                query = query.filter(AnalysisRun.status == status)
+            run = query.order_by(AnalysisRun.started_at.desc()).first()
+            if run:
+                # Detach before returning
+                session.expunge(run)
+            return run
+
+    def get_run_by_id(self, run_id: int) -> Optional[AnalysisRun]:
+        """Return a single analysis run by ID, detached from session.
+
+        Args:
+            run_id: The analysis run ID
+
+        Returns:
+            AnalysisRun or None if not found
+        """
+        with self.transaction() as session:
+            run = session.query(AnalysisRun).filter_by(id=run_id).first()
+            if run:
+                session.expunge(run)
+            return run
     
     def generate_daily_summary(self, run_id: int) -> List[DailySummary]:
         """
@@ -707,44 +746,69 @@ class DatabaseManager:
                         keyword_counts[term] = keyword_counts.get(term, 0) + int(cnt or 0)
                 keyword_mentions_json = json.dumps(keyword_counts) if keyword_counts else None
                 
-                # Create summary
-                summary = DailySummary(
-                    analysis_run_id=run_id,
-                    subreddit_id=subreddit.id,
-                    date=run.run_date,
-                    total_posts=total_posts,
-                    total_comments=total_comments,
-                    avg_post_sentiment=avg_post_sentiment,
-                    avg_comment_sentiment=avg_comment_sentiment,
-                    positive_posts=positive_posts,
-                    negative_posts=negative_posts,
-                    neutral_posts=neutral_posts,
-                    top_positive_post_id=top_positive.id if top_positive else None,
-                    top_negative_post_id=top_negative.id if top_negative else None,
-                    most_discussed_post_id=most_discussed.id if most_discussed else None,
-                    keyword_mentions=keyword_mentions_json
-                )
-                
-                session.add(summary)
-                session.flush()
-                
+                # Upsert summary (unique on date + subreddit)
+                existing = session.query(DailySummary).filter(
+                    and_(
+                        DailySummary.date == run.run_date,
+                        DailySummary.subreddit_id == subreddit.id,
+                    )
+                ).first()
+
+                if existing:
+                    # Update existing summary in-place
+                    existing.analysis_run_id = run_id
+                    existing.total_posts = total_posts
+                    existing.total_comments = total_comments
+                    existing.avg_post_sentiment = avg_post_sentiment
+                    existing.avg_comment_sentiment = avg_comment_sentiment
+                    existing.positive_posts = positive_posts
+                    existing.negative_posts = negative_posts
+                    existing.neutral_posts = neutral_posts
+                    existing.top_positive_post_id = top_positive.id if top_positive else None
+                    existing.top_negative_post_id = top_negative.id if top_negative else None
+                    existing.most_discussed_post_id = most_discussed.id if most_discussed else None
+                    existing.keyword_mentions = keyword_mentions_json
+                    session.flush()
+                    target = existing
+                else:
+                    # Create new summary
+                    summary = DailySummary(
+                        analysis_run_id=run_id,
+                        subreddit_id=subreddit.id,
+                        date=run.run_date,
+                        total_posts=total_posts,
+                        total_comments=total_comments,
+                        avg_post_sentiment=avg_post_sentiment,
+                        avg_comment_sentiment=avg_comment_sentiment,
+                        positive_posts=positive_posts,
+                        negative_posts=negative_posts,
+                        neutral_posts=neutral_posts,
+                        top_positive_post_id=top_positive.id if top_positive else None,
+                        top_negative_post_id=top_negative.id if top_negative else None,
+                        most_discussed_post_id=most_discussed.id if most_discussed else None,
+                        keyword_mentions=keyword_mentions_json
+                    )
+                    session.add(summary)
+                    session.flush()
+                    target = summary
+
                 # Create detached copy with all attributes
                 summary_dict = {
-                    'id': summary.id,
-                    'analysis_run_id': summary.analysis_run_id,
-                    'subreddit_id': summary.subreddit_id,
-                    'date': summary.date,
-                    'total_posts': summary.total_posts,
-                    'total_comments': summary.total_comments,
-                    'avg_post_sentiment': summary.avg_post_sentiment,
-                    'avg_comment_sentiment': summary.avg_comment_sentiment,
-                    'positive_posts': summary.positive_posts,
-                    'negative_posts': summary.negative_posts,
-                    'neutral_posts': summary.neutral_posts,
-                    'top_positive_post_id': summary.top_positive_post_id,
-                    'top_negative_post_id': summary.top_negative_post_id,
-                    'most_discussed_post_id': summary.most_discussed_post_id,
-                    'keyword_mentions': summary.keyword_mentions
+                    'id': target.id,
+                    'analysis_run_id': target.analysis_run_id,
+                    'subreddit_id': target.subreddit_id,
+                    'date': target.date,
+                    'total_posts': target.total_posts,
+                    'total_comments': target.total_comments,
+                    'avg_post_sentiment': target.avg_post_sentiment,
+                    'avg_comment_sentiment': target.avg_comment_sentiment,
+                    'positive_posts': target.positive_posts,
+                    'negative_posts': target.negative_posts,
+                    'neutral_posts': target.neutral_posts,
+                    'top_positive_post_id': target.top_positive_post_id,
+                    'top_negative_post_id': target.top_negative_post_id,
+                    'most_discussed_post_id': target.most_discussed_post_id,
+                    'keyword_mentions': target.keyword_mentions
                 }
                 
                 # Create new detached instance
@@ -865,3 +929,19 @@ class DatabaseManager:
         self.Session.remove()
         self.engine.dispose()
         logger.info("Database connections closed")
+
+    def reset_database(self) -> None:
+        """Drop and recreate all tables, clearing all data.
+
+        Safe way to start with a clean schema without manually deleting files.
+        """
+        try:
+            logger.warning("Resetting database: dropping all tables and recreating schema")
+            # Ensure sessions are cleared before DDL
+            self.Session.remove()
+            Base.metadata.drop_all(self.engine)
+            Base.metadata.create_all(self.engine)
+            logger.info("Database schema recreated successfully")
+        except Exception as e:
+            logger.error(f"Failed to reset database: {e}")
+            raise
